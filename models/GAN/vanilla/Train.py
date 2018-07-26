@@ -130,9 +130,9 @@ def train(epoch):
         D_total = D_real + D_fake
         opto_D.step()
 
-        batch.add('loss/total',D_total.data[0])
-        batch.add('loss/real',D_real.data[0])
-        batch.add('loss/fake',D_fake.data[0])
+        batch.add('loss/total',D_total.item())
+        batch.add('loss/real',D_real.item())
+        batch.add('loss/fake',D_fake.item())
 
         ####
         # Train G
@@ -152,7 +152,7 @@ def train(epoch):
 
         opto_G.step()
 
-        batch.add('loss/G',G_loss.data[0])
+        batch.add('loss/G',G_loss.item())
 
         ##
         # Progress Reporting
