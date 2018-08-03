@@ -11,6 +11,7 @@ tensorboardx = "*"
 pytorch-utils = {git = "git://github.com/cottersci/pytorch_utils"}
 torchvision = "*"
 tensorflow = "*"
+pytest = "*"
 
 [dev-packages]
 
