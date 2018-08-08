@@ -104,9 +104,10 @@ gauss = torch.FloatTensor(opt.batch_size,opt.z_dim) # z ~ p(z)
 ### ---  FUNCTION DEFINITIONS -------------------------------- ####
 ##
 def logQ(z,mu,logstd):
-    var = logstd.exp().pow(2)
+    std = logstd.exp()
+    epislon = (z - mu).div(std + EPS)
 
-    return -0.5*(torch.log(2 * math.pi * var)) - (z-mu).pow(2).div(var.mul(2.0) + EPS)
+    return -0.5 * math.log(2 * math.pi) - torch.log(std + EPS) - 0.5 * epislon.pow(2)
 
 def train(epoch):
     '''
@@ -144,8 +145,7 @@ def train(epoch):
         gauss.normal_()
         noise.normal_()
         z = Variable(gauss)
-        x_fake = G(torch.cat((z,Variable(noise)),1))
-        #x_fake = G(z)
+        x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         # P_D(x_fake)
         p_fake = D(x_fake) + 1e-8 #
@@ -169,13 +169,12 @@ def train(epoch):
         noise.normal_()
         z = Variable(gauss,requires_grad=True)
         z.register_hook(lambda grad: batch.add('norms/G',grad.data.norm(2,1).mean()))
-        x_fake = G(torch.cat((z,Variable(noise)),1))
-        #x_fake = G(z)
+        x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         #P_D(x_fake)
         x_fake.register_hook(lambda grad: batch.add('norms/D',grad.data.norm(2,1).mean()))
         p_fake = D(x_fake) + 1e-8
-        G_loss = -torch.mean( torch.log(p_fake) )
+        G_loss = torch.mean( 1 - torch.log(p_fake) )
         G_loss.backward(retain_graph=True)
 
         #c ~ Q(x_fake)
@@ -232,8 +231,7 @@ def test(epoch):
 
     z = Variable(z)
     noise.resize_(z.size()[0],opt.Nnoise).normal_()
-    x = G.eval()(torch.cat((z,Variable(noise)),1))
-    #x = G.eval()(z)
+    x = G.eval()(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
     x = x.data
     z = z.data
