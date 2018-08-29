@@ -84,10 +84,9 @@ if(opt.Net == 'linear'):
     # G = linear.Net_G(opt.z_dim)
     # D = linear.Net_D()
 else:
-    S = conv.Net_Shared()
     G = conv.Net_G(opt.z_dim + opt.Nnoise)
-    D = conv.Net_D(S)
-    Q = conv.Net_Q(opt.z_dim,S,on_gpu=opt.no_cuda)
+    D = conv.Net_D()
+    Q = conv.Net_Q(opt.z_dim,on_gpu=opt.no_cuda)
 
 # Training Variables
 opto_G = optim.Adam(G.parameters(), lr=opt.lr) # Training
@@ -97,7 +96,10 @@ opto_D = optim.Adam(D.parameters(), lr=opt.lr) # Training
 log = SummaryWriter(opt.logdir,opt.comment) # Logging
 batch = batcher() # Logging
 
-noise = torch.FloatTensor(opt.batch_size,opt.Nnoise)
+if opt.Nnoise > 0:
+    noise = torch.FloatTensor(opt.batch_size,opt.Nnoise)
+else:
+    noise = None
 gauss = torch.FloatTensor(opt.batch_size,opt.z_dim) # z ~ p(z)
 
 ##
@@ -105,9 +107,28 @@ gauss = torch.FloatTensor(opt.batch_size,opt.z_dim) # z ~ p(z)
 ##
 def logQ(z,mu,logstd):
     std = logstd.exp()
-    epislon = (z - mu).div(std + EPS)
+    epislon = (z - mu).pow(2).div(2 * std + EPS)
 
-    return -0.5 * math.log(2 * math.pi) - torch.log(std + EPS) - 0.5 * epislon.pow(2)
+    return -0.5 * (math.log(2 * math.pi) + torch.log(std + EPS) + epislon)
+
+def grad_norm(parameters,norm_type = 2):
+    parameters = list(filter(lambda p: p.grad is not None, parameters))
+
+    norm_type = float(norm_type)
+    total_norm = 0
+    for p in parameters:
+        param_norm = p.grad.data.norm(norm_type)
+        total_norm += param_norm.item() ** norm_type
+    total_norm = total_norm ** (1. / norm_type)
+
+    return total_norm
+
+def clip_grad_norm(parameters, g_u, g_m, norm_type=2):
+    parameters = list(filter(lambda p: p.grad is not None, parameters))
+    norm_type = float(norm_type)
+
+    for p in parameters:
+        p.grad.data.div_(g_m).mul_(min(g_u,g_m))
 
 def train(epoch):
     '''
@@ -129,7 +150,8 @@ def train(epoch):
         if opt.no_cuda:
             img0 = img0.cuda()
         x_real  = Variable(img0)
-        noise.resize_(x_real.size()[0],opt.Nnoise)
+        if opt.Nnoise > 0:
+            noise.resize_(x_real.size()[0],opt.Nnoise)
         gauss.resize_(img0.size()[0],opt.z_dim)
 
         ####
@@ -143,13 +165,15 @@ def train(epoch):
 
         # z ~ N(0,1), x_fake ~ q(x|z)
         gauss.normal_()
-        noise.normal_()
+        if  opt.Nnoise > 0:
+            noise.normal_()
         z = Variable(gauss)
         x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         # P_D(x_fake)
+        x_fake.register_hook(lambda grad: batch.add('norms/D',grad.data.norm(2,1).mean()))
         p_fake = D(x_fake) + 1e-8 #
-        D_fake = -torch.mean( torch.log(1 - p_fake) )
+        D_fake = torch.mean( -torch.log(1 - p_fake) )
         D_fake.backward()
 
         D_total = D_real + D_fake
@@ -161,34 +185,55 @@ def train(epoch):
 
         ####
         # Train G and Q
-        opto_G.zero_grad()
-        opto_Q.zero_grad()
+
 
         # z ~ N(0,1), x_fake ~ q(x|z)
+        opto_G.zero_grad()
         gauss.normal_()
-        noise.normal_()
+        if opt.Nnoise > 0:
+            noise.normal_()
         z = Variable(gauss,requires_grad=True)
-        z.register_hook(lambda grad: batch.add('norms/G',grad.data.norm(2,1).mean()))
+        #z.register_hook(lambda grad: batch.add('norms/G',grad.data.norm(2,1).mean()))
         x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         #P_D(x_fake)
-        x_fake.register_hook(lambda grad: batch.add('norms/D',grad.data.norm(2,1).mean()))
         p_fake = D(x_fake) + 1e-8
-        G_loss = torch.mean( 1 - torch.log(p_fake) )
+        G_loss = torch.mean( -torch.log(p_fake) )
         G_loss.backward(retain_graph=True)
 
-        #c ~ Q(x_fake)
-        x_fake.register_hook(lambda grad: batch.add('norms/Q',grad.data.norm(2,1).mean()))
-        c,mu,logstd = Q(x_fake)
-        batch.add('debug/Qvar',logstd.exp().pow(2).mean())
-        Q_loss = -logQ(z,mu,logstd).mean() # log(P(z|x))
-        Q_loss.backward()
+        G_norm_discrim = grad_norm(G.parameters())
+        batch.add('norms/G_discrim',G_norm_discrim)
 
-        opto_Q.step()
         opto_G.step()
 
+        #c ~ Q(x_fake)
+        opto_G.zero_grad()
+        opto_Q.zero_grad()
+        c,mu,logstd = Q(x_fake)
+        batch.add('debug/Qvar',logstd.exp().pow(2).mean())
+        batch.add('debug/Qerror',(c-z).pow(2).sqrt().mean())
+        #L = (c - z).pow(2).sum(1).mean()
+        L = -logQ(z,mu,logstd).sum(1).mean() # log(P(z|x))
+        Q_loss = L
+        Q_loss.backward()
+
+        Q_norm = grad_norm(Q.parameters())
+        G_norm_info = grad_norm(G.parameters())
+        batch.add('norms/Q',Q_norm)
+        batch.add('norms/G_info',G_norm_info)
+
+        #Clip the mutual information gradient so it does not overtake the
+        #  discrimator gradient when training the generator
+        clip_grad_norm(G.parameters(), G_norm_discrim, G_norm_info)
+        G_norm_clipped = grad_norm(G.parameters())
+        batch.add('norms/G_clipped',G_norm_clipped)
+
+        opto_G.step()
+        opto_Q.step()
+
         batch.add('loss/G',G_loss.item())
-        batch.add('loss/auxiliary',Q_loss.item())
+        batch.add('loss/auxiliary',L.item())
+        batch.add('loss/Q',Q_loss.item())
 
         ##
         # Progress Reporting
@@ -200,7 +245,7 @@ def train(epoch):
                      len(train_loader.dataset),
                    ),
                   end = '')
-            batch.report()
+            batch.report('norms/*')
             print('',flush=True)
 
             #Universal step is total number of batches trained on
@@ -230,7 +275,8 @@ def test(epoch):
         z = z.cuda()
 
     z = Variable(z)
-    noise.resize_(z.size()[0],opt.Nnoise).normal_()
+    if opt.Nnoise > 0:
+        noise.resize_(z.size()[0],opt.Nnoise).normal_()
     x = G.eval()(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
     x = x.data
@@ -251,8 +297,9 @@ def test(epoch):
 if(opt.no_cuda):
     G = G.cuda()
     D = D.cuda()
+    Q = Q.cuda()
     gauss = gauss.cuda()
-    noise = noise.cuda()
+    noise = noise.cuda() if opt.Nnoise > 0 else None
 
 for epoch in range(int(opt.epochs)):
     train(epoch)
@@ -263,12 +310,14 @@ for epoch in range(int(opt.epochs)):
         util.save_nets(folder_name,
                         {
                          'D': D,
-                         'G': G
+                         'G': G,
+                         'Q': Q
                         })
 
 folder_name = './CHECKPOINT-END'
 util.save_nets(folder_name,
                 {
                  'D': D,
-                 'G': G
+                 'G': G,
+                 'Q': Q
                 })
