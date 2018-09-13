@@ -58,6 +58,15 @@ parser.add_argument('--Nnoise',
                     default=64,
                     help='''The number of noise dimenions to add to the
                             generator input''')
+parser.add_argument('--Ncat',
+                    type=int,
+                    default=1,
+                    help='''The number of categorial dimenions to add to the
+                            generator input''')
+parser.add_argument('--catDim',
+                    type=int,
+                    default=10,
+                    help='''The dimenions of the categorial variables''')
 opt = parser.parse_args()
 print(opt)
 
@@ -84,9 +93,9 @@ if(opt.Net == 'linear'):
     # G = linear.Net_G(opt.z_dim)
     # D = linear.Net_D()
 else:
-    G = conv.Net_G(opt.z_dim + opt.Nnoise)
+    G = conv.Net_G(opt.z_dim + opt.Nnoise + opt.Ncat)
     D = conv.Net_D()
-    Q = conv.Net_Q(opt.z_dim,on_gpu=opt.no_cuda)
+    Q = conv.Net_Q(opt.z_dim,opt.catDim,on_gpu=opt.no_cuda)
 
 # Training Variables
 opto_G = optim.Adam(G.parameters(), lr=opt.lr) # Training
@@ -101,10 +110,13 @@ if opt.Nnoise > 0:
 else:
     noise = None
 gauss = torch.FloatTensor(opt.batch_size,opt.z_dim) # z ~ p(z)
+cat   = torch.FloatTensor(opt.batch_size,opt.Ncat)
 
 ##
 ### ---  FUNCTION DEFINITIONS -------------------------------- ####
 ##
+CELoss = nn.CrossEntropyLoss()
+
 def logQ(z,mu,logstd):
     std = logstd.exp()
     epislon = (z - mu).pow(2).div(2 * std + EPS)
@@ -153,7 +165,7 @@ def train(epoch):
         if opt.Nnoise > 0:
             noise.resize_(x_real.size()[0],opt.Nnoise)
         gauss.resize_(img0.size()[0],opt.z_dim)
-
+        cat.resize_(img0.size()[0],opt.Ncat)
         ####
         # Train D
         opto_D.zero_grad()
@@ -165,10 +177,11 @@ def train(epoch):
 
         # z ~ N(0,1), x_fake ~ q(x|z)
         gauss.normal_()
+        cat.random_(0,opt.catDim - 1)
         if  opt.Nnoise > 0:
             noise.normal_()
         z = Variable(gauss)
-        x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
+        x_fake = G(torch.cat((z,cat,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         # P_D(x_fake)
         x_fake.register_hook(lambda grad: batch.add('norms/D',grad.data.norm(2,1).mean()))
@@ -190,11 +203,12 @@ def train(epoch):
         # z ~ N(0,1), x_fake ~ q(x|z)
         opto_G.zero_grad()
         gauss.normal_()
+        cat.random_(0,opt.catDim - 1)
         if opt.Nnoise > 0:
             noise.normal_()
         z = Variable(gauss,requires_grad=True)
         #z.register_hook(lambda grad: batch.add('norms/G',grad.data.norm(2,1).mean()))
-        x_fake = G(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
+        x_fake = G(torch.cat((z,cat,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
         #P_D(x_fake)
         p_fake = D(x_fake) + 1e-8
@@ -209,12 +223,12 @@ def train(epoch):
         #c ~ Q(x_fake)
         opto_G.zero_grad()
         opto_Q.zero_grad()
-        c,mu,logstd = Q(x_fake)
+        c,mu,logstd,c_pred = Q(x_fake)
         batch.add('debug/Qvar',logstd.exp().pow(2).mean())
         batch.add('debug/Qerror',(c-z).pow(2).sqrt().mean())
         #L = (c - z).pow(2).sum(1).mean()
         L = -logQ(z,mu,logstd).sum(1).mean() # log(P(z|x))
-        Q_loss = L
+        Q_loss = L + CELoss(c_pred,cat.long().view(-1))
         Q_loss.backward()
 
         Q_norm = grad_norm(Q.parameters())
@@ -277,7 +291,8 @@ def test(epoch):
     z = Variable(z)
     if opt.Nnoise > 0:
         noise.resize_(z.size()[0],opt.Nnoise).normal_()
-    x = G.eval()(torch.cat((z,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
+    cat.resize_(z.size()[0],opt.Ncat).random_(0,opt.catDim - 1)
+    x = G.eval()(torch.cat((z,cat,Variable(noise)),1)) if opt.Nnoise > 0 else G(z)
 
     x = x.data
     z = z.data
@@ -289,7 +304,20 @@ def test(epoch):
     ##
     # Generate Image
     buf = make_grid(x, padding=3,nrow=math.floor(math.sqrt(opt.Nimages ** opt.z_dim)),range=(0,1))
-    log.add_image('Generated', buf, (epoch + 1) * len(train_loader))
+    log.add_image('Continous', buf, (epoch + 1) * len(train_loader))
+
+    c = torch.tensor([float(x) for x in range(opt.catDim)]).view(opt.Ncat,opt.catDim).cuda()
+    noise.resize_(opt.Ncat,opt.Nnoise)
+    z = torch.FloatTensor(opt.Ncat,opt.z_dim).normal_().cuda()
+    print(c.size())
+    print(noise.size())
+    print(z.size())
+    x = G.eval()(torch.cat((Variable(z),Variable(c),Variable(noise)),1))
+    x = x.data
+    if opt.no_cuda:
+        x = x.cpu()
+    buf = make_grid(x, padding=3,nrow=opt.catDim,range=(0,1))
+    log.add_image('Discrete', buf, (epoch + 1) * len(train_loader))
 
 ##
 ### ---  TRAINING ------------------------------------------------ ####
@@ -300,7 +328,7 @@ if(opt.no_cuda):
     Q = Q.cuda()
     gauss = gauss.cuda()
     noise = noise.cuda() if opt.Nnoise > 0 else None
-
+    cat = cat.cuda()
 for epoch in range(int(opt.epochs)):
     train(epoch)
     test(epoch)

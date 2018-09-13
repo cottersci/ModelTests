@@ -12,7 +12,7 @@ class Net_D(nn.Module):
         Discirminator network
     '''
 
-    ngf = 64
+    ngf = 32
 
     def __init__(self):
         """
@@ -54,9 +54,9 @@ class Net_Q(nn.Module):
     '''
         Auxiliary distribution network
     '''
-    ngf = 64
+    ngf = 32
 
-    def __init__(self,z_dim,on_gpu):
+    def __init__(self,z_dim,c_dim,on_gpu):
         """
             Initilize auxiliary distribution network
 
@@ -67,6 +67,7 @@ class Net_Q(nn.Module):
         """
         super(Net_Q, self).__init__()
 
+        self.c_dim = c_dim
         self.z_dim = z_dim
         self.on_gpu = on_gpu
 
@@ -80,18 +81,23 @@ class Net_Q(nn.Module):
 
         self.layer_logstd = nn.Conv2d(self.ngf * 4, self.z_dim, 4, stride=1, padding=0, bias=False)
 
+        self.layer_c = nn.Sequential(
+            nn.Conv2d(self.ngf * 4, self.c_dim, 4, stride=1, padding=0, bias=False),
+            nn.Sigmoid()
+        )
 
     def forward(self,x):
         x = self.layer1(x)
         x = self.layer2(x)
         x = self.layer3(x)
 
+        c = self.layer_c(x).view(-1,self.c_dim)
+
         mu = self.layer_mu(x).view(-1,self.z_dim)
         logstd = self.layer_logstd(x).view(-1,self.z_dim)
-
         z = self.reparametrize(mu,logstd)
 
-        return z, mu, logstd
+        return z, mu, logstd, c
 
     def reparametrize(self, mu, logstd):
         std = logstd.exp()
@@ -118,7 +124,7 @@ class Net_G(nn.Module):
     '''
     def __init__(self,z_dim):
         super(Net_G, self).__init__()
-        self.ngf = 64
+        self.ngf = 32
         self.z_dim = z_dim
 
         self.layer1 = self.create_layer_t(self.z_dim, self.ngf, stride=1, output_padding=0, padding=0, kernel=3)
