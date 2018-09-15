@@ -33,6 +33,10 @@ class D(nn.Module):
             self.create_layer(self.ngf * 4, self.ngf * 4, kernel = 4, stride = 1, padding = 0), # -> ngf x 1 x 1
         ) # -> ngf x 1 x 1
 
+        # self.layer_mu = nn.Conv2d(self.ngf  * 4, self.z_dim, 1, stride=1, padding=0, bias=False)
+        #
+        # self.layer_logstd = nn.Conv2d(self.ngf  * 4, self.z_dim, 1, stride=1, padding=0, bias=False)
+
         self.Dz = nn.Sequential( # <- z_dim x 1 x 1
             self.create_layer(self.z_dim, self.ngf * 4, kernel = 1, stride = 1, padding = 0),
             self.create_layer(self.ngf * 4, self.ngf * 4, kernel = 1, stride = 1, padding = 0),
@@ -53,6 +57,10 @@ class D(nn.Module):
         x = self.Dx(x) # -> ngf x 4 x 4
         z = self.Dz(z.view(-1,self.z_dim,1,1))
         xz = self.Dxz(torch.cat((x,z),dim=1))
+
+        # mu = self.layer_mu(x)
+        # logstd = self.layer_logstd(x)
+        # return xz.view(-1,1), self.reparametrize(mu,logstd)
         return xz.view(-1,1)
 
     def create_layer(self, Nin, Nout, kernel=3, stride=2, padding=1):
@@ -65,12 +73,18 @@ class D(nn.Module):
 
         return layer
 
+    def reparametrize(self, mu, logstd):
+        std = logstd.exp()
+        eps = torch.cuda.FloatTensor(std.size()).normal_()
+        eps = Variable(eps)
+        return eps.mul(std).add_(mu)
+
 class Gz(nn.Module):
     '''
                    G_z(x)
         x ~ q(x) ---------> \hat{z} ~ q(z|x)
     '''
-    ngf = 32
+    ngf = 64
     z_dim = 0
     noise_dim = 0
     def __init__(self,z_dim,noise_dim):
@@ -136,7 +150,7 @@ class Gx(nn.Module):
                    G_x(z)
         z ~ p(z) ---------> \hat{x} ~ q(x|z)
     '''
-    ngf = 32
+    ngf = 64
     z_dim = 0
     nnoise_dim = 0
     def __init__(self,z_dim,noise_dim):

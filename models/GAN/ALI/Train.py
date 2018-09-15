@@ -97,16 +97,29 @@ def train(epoch):
         x_gen = Gx(z,Variable(noise))
         p_p = D(x_gen,z)
 
+        # D loss
         opto_D.zero_grad()
-        Loss_d = -torch.log(p_q + EPS).mean() - torch.log(1 - p_p).mean()
+        Loss_d = -torch.log(p_q + EPS).mean() - torch.log(1 - p_p + EPS).mean()
         Loss_d.backward(retain_graph=True)
-        opto_D.step()
         batch.add('gradients/D',utils.grad_norm(D.parameters()))
         batch.add('loss/d',Loss_d.item())
+        opto_D.step()
 
+        # I(x_hat,z)
+        # opto_Gx.zero_grad()
+        # opto_D.zero_grad()
+        # Loss_I = (z_est - z + EPS).pow(2).sqrt().sum(dim=1).mean()
+        # Loss_I.backward(retain_graph=True)
+        # opto_D.step()
+        # opto_Gx.step()
+        # batch.add('gradients/I_D',utils.grad_norm(D.parameters()))
+        # batch.add('gradients/I_Gx',utils.grad_norm(Gx.parameters()))
+        # batch.add('loss/I',Loss_I.item())
+
+        # Gx,Gz
         opto_Gx.zero_grad()
         opto_Gz.zero_grad()
-        Loss_g = -torch.log(1 - p_q).mean() - torch.log(p_p + EPS).mean()
+        Loss_g = -torch.log(1 - p_q + EPS).mean() - torch.log(p_p + EPS).mean()
         Loss_g.backward()
         opto_Gx.step()
         opto_Gz.step()

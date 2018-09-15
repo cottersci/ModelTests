@@ -1,11 +1,8 @@
 #PBS -S /bin/bash
 #PBS -q gpu_q
 #PBS -l nodes=1:ppn=2:gpus=1
-#PBS -l walltime=2:00:00:00
+#PBS -l walltime=3:00:00:00
 #PBS -l mem=6gb
-
-TRAINING_FOLDER="Eval_Runs"
-DATASET_FOLDER="$(pwd)/data"
 
 #Extend Maximum number of directories to recursively search for a Pipfile.
 export PIPENV_MAX_DEPTH=10
@@ -28,6 +25,9 @@ else
   exit
 fi
 
+TRAINING_FOLDER="Eval_Runs"
+DATASET_FOLDER="$(pwd)/data"
+
 ml CUDA/9.0.176
 ml cuDNN/7.0.4-CUDA-9.0.176
 ml Python/3.6.4-foss-2018a
@@ -42,5 +42,4 @@ cp run2.sh $TRAINING_FOLDER/$RUN/
 
 cd $TRAINING_FOLDER/$RUN/
 
-pipenv run python Train.py 2 --Nnoise 0 --download --Nimages 10\
-                    --dataset-loc $DATASET_FOLDER --dataset MNIST
+pipenv run python Train.py 7 $DATASET_FOLDER  --Nimages 2
