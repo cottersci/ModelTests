@@ -29,32 +29,38 @@ class D(nn.Module):
         self.Dx = nn.Sequential( # <- 1 x 32 x 32
             self.create_layer(1, self.ngf), # -> ngf x 16 x 16
             self.create_layer(self.ngf, self.ngf * 2), # -> ngf x 8 x 8
-            self.create_layer(self.ngf * 2, self.ngf * 4), # -> ngf x 4 x 4
-            self.create_layer(self.ngf * 4, self.ngf * 4, kernel = 4, stride = 1, padding = 0), # -> ngf x 1 x 1
+            self.create_layer(self.ngf * 2, self.ngf * 2), # -> ngf x 4 x 4
+            #self.create_layer(self.ngf * 4, self.ngf * 4 * 4 * 4, kernel = 4, stride = 1, padding = 0), # -> ngf x 1 x 1
         ) # -> ngf x 1 x 1
 
-        # self.layer_mu = nn.Conv2d(self.ngf  * 4, self.z_dim, 1, stride=1, padding=0, bias=False)
-        #
-        # self.layer_logstd = nn.Conv2d(self.ngf  * 4, self.z_dim, 1, stride=1, padding=0, bias=False)
+        # I_ngf = self.ngf * 2 * 4 * 4
+        # self.I = nn.Sequential(
+        #     nn.Linear(I_ngf,I_ngf),
+        #     nn.BatchNorm1d(I_ngf,I_ngf),
+        #     nn.LeakyReLU(),
+        #     nn.Linear(I_ngf,1),
+        # ) # -> ngf x 1
 
         self.Dz = nn.Sequential( # <- z_dim x 1 x 1
             self.create_layer(self.z_dim, self.ngf * 4, kernel = 1, stride = 1, padding = 0),
             self.create_layer(self.ngf * 4, self.ngf * 4, kernel = 1, stride = 1, padding = 0),
+            self.create_layer(self.ngf * 4, self.ngf * 4 * 4, kernel = 1, stride = 1, padding = 0),
         ) # -> ngf x 1 x 1
 
-        linear_ngf = self.ngf * 4 + self.ngf * 4
+
+        linear_ngf = self.ngf * 4 * 4 * 2 + self.ngf * 4 * 4
         self.Dxz = nn.Sequential(
             self.create_layer(linear_ngf, linear_ngf, kernel = 1, stride = 1, padding = 0),
             self.create_layer(linear_ngf, linear_ngf, kernel = 1, stride = 1, padding = 0),
-            nn.Conv2d(linear_ngf, 1, 1, stride = 1, padding = 0, bias=False),
+            nn.Conv2d(linear_ngf, 1, 1, stride=1, padding=0, bias=True),
             nn.Sigmoid()
-        ) # -> ngf x 1 x 1
+        ) # -> ngf x 1
 
     def forward(self,x,z): #<- 1 x 32 x 32
         """
             Input is a batch_size x 1 x 32 x 32 (Channels x Height x Width).
         """
-        x = self.Dx(x) # -> ngf x 4 x 4
+        x = self.Dx(x).view(-1,self.ngf * 4 * 4 * 2,1,1) # -> ngf x 4 x 4
         z = self.Dz(z.view(-1,self.z_dim,1,1))
         xz = self.Dxz(torch.cat((x,z),dim=1))
 
@@ -84,7 +90,7 @@ class Gz(nn.Module):
                    G_z(x)
         x ~ q(x) ---------> \hat{z} ~ q(z|x)
     '''
-    ngf = 64
+    ngf = 32
     z_dim = 0
     noise_dim = 0
     def __init__(self,z_dim,noise_dim):
@@ -150,7 +156,7 @@ class Gx(nn.Module):
                    G_x(z)
         z ~ p(z) ---------> \hat{x} ~ q(x|z)
     '''
-    ngf = 64
+    ngf = 32
     z_dim = 0
     nnoise_dim = 0
     def __init__(self,z_dim,noise_dim):
@@ -164,7 +170,7 @@ class Gx(nn.Module):
         self.z_dim = z_dim
         self.noise_dim = noise_dim
 
-        self.layer1 = self.create_layer_t(self.z_dim + self.noise_dim, self.ngf, stride=1, output_padding=0, padding=0, kernel=3)
+        self.layer1 = self.create_layer_t(self.z_dim, self.ngf, stride=1, output_padding=0, padding=0, kernel=3)
 
         self.layer2 = self.create_layer_t(self.ngf, self.ngf * 2, stride=2, output_padding=0, padding=0, kernel=3)
 
@@ -191,8 +197,9 @@ class Gx(nn.Module):
                 z (FloatTensor): embedded space sample
                 noise (FloatTensor): gaussian noise
         """
-        x = torch.cat((z,noise),dim=1)
-        x = self.layer1(x.view(-1, self.z_dim + self.noise_dim, 1, 1))
+        #x = torch.cat((z,noise),dim=1)
+        #x = self.layer1(x.view(-1, self.z_dim + self.noise_dim, 1, 1))
+        x = self.layer1(z.view(-1,self.z_dim,1,1))
         x = self.layer2(x)
         x = self.layer3(x)
         x = self.output_layer(x)
