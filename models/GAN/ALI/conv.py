@@ -33,13 +33,9 @@ class D(nn.Module):
             #self.create_layer(self.ngf * 4, self.ngf * 4 * 4 * 4, kernel = 4, stride = 1, padding = 0), # -> ngf x 1 x 1
         ) # -> ngf x 1 x 1
 
-        # I_ngf = self.ngf * 2 * 4 * 4
-        # self.I = nn.Sequential(
-        #     nn.Linear(I_ngf,I_ngf),
-        #     nn.BatchNorm1d(I_ngf,I_ngf),
-        #     nn.LeakyReLU(),
-        #     nn.Linear(I_ngf,1),
-        # ) # -> ngf x 1
+        self.layer_mu = nn.Conv2d(self.ngf  * 2, self.z_dim, 4, stride=1, padding=0, bias=True)
+
+        self.layer_logstd = nn.Conv2d(self.ngf  * 2, self.z_dim, 4, stride=1, padding=0, bias=True)
 
         self.Dz = nn.Sequential( # <- z_dim x 1 x 1
             self.create_layer(self.z_dim, self.ngf * 4, kernel = 1, stride = 1, padding = 0),
@@ -60,14 +56,14 @@ class D(nn.Module):
         """
             Input is a batch_size x 1 x 32 x 32 (Channels x Height x Width).
         """
-        x = self.Dx(x).view(-1,self.ngf * 4 * 4 * 2,1,1) # -> ngf x 4 x 4
+        x = self.Dx(x) # -> ngf x 4 x 4
         z = self.Dz(z.view(-1,self.z_dim,1,1))
-        xz = self.Dxz(torch.cat((x,z),dim=1))
+        xz = self.Dxz(torch.cat((x.view(-1,self.ngf * 4 * 4 * 2,1,1),z),dim=1))
 
-        # mu = self.layer_mu(x)
-        # logstd = self.layer_logstd(x)
-        # return xz.view(-1,1), self.reparametrize(mu,logstd)
-        return xz.view(-1,1)
+        mu = self.layer_mu(x).view(-1,self.z_dim)
+        logstd = self.layer_logstd(x).view(-1,self.z_dim)
+
+        return xz.view(-1,1), mu, logstd
 
     def create_layer(self, Nin, Nout, kernel=3, stride=2, padding=1):
         layer = nn.Sequential(
@@ -131,7 +127,7 @@ class Gz(nn.Module):
 
         z = self.reparametrize(mu,logstd)
 
-        return z
+        return z, mu, logstd
         #x = x.view(-1,self.ngf * 4 * 4 * 4)
         #x = torch.cat((x,noise),dim=1)
         #return self.layer_output(x).view(-1,self.z_dim)

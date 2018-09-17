@@ -87,17 +87,17 @@ def train(epoch):
 
         # p_q = P(x_real,z_gen)
         noise.normal_() # noise ~ N(0,1)
-        z_gen = Gz(x_real,Variable(noise))
-        p_q = D(x_real,z_gen)
+        z_gen, Gz_mu, _ = Gz(x_real,Variable(noise))
+        p_q, _, _ = D(x_real,z_gen)
 
         # p_p = P(x_gen,z), z ~ N(0,1)
         gauss.normal_() # z ~ N(0,1)
         noise.normal_()  # noise ~ N(0,1)
         z = Variable(gauss)
         x_gen = Gx(z,Variable(noise))
-        p_p = D(x_gen,z)
+        p_p, mu, logstd = D(x_gen,z)
 
-        # D loss
+        #D loss
         opto_D.zero_grad()
         Loss_d = -torch.log(p_q + EPS).mean() - torch.log(1 - p_p + EPS).mean()
         Loss_d.backward(retain_graph=True)
@@ -106,24 +106,29 @@ def train(epoch):
         opto_D.step()
 
         # I(x_hat,z)
-        # opto_Gx.zero_grad()
-        # opto_D.zero_grad()
-        # Loss_I = (z_est - z + EPS).pow(2).sqrt().sum(dim=1).mean()
-        # Loss_I.backward(retain_graph=True)
-        # opto_D.step()
-        # opto_Gx.step()
-        # batch.add('gradients/I_D',utils.grad_norm(D.parameters()))
-        # batch.add('gradients/I_Gx',utils.grad_norm(Gx.parameters()))
-        # batch.add('loss/I',Loss_I.item())
+        opto_Gx.zero_grad()
+        opto_D.zero_grad()
+        Loss_I = (mu - z).pow(2).sum(dim=1).mean()
+        #Loss_I = -utils.logQ(z, mu, logstd).sum(dim=1).mean()
+        Loss_I.backward(retain_graph=True)
+        opto_D.step()
+        opto_Gx.step()
+        I_Gx_grad = utils.grad_norm(Gx.parameters())
+        batch.add('gradients/I_D',utils.grad_norm(D.parameters()))
+        batch.add('gradients/I_Gx',I_Gx_grad)
+        batch.add('loss/I',Loss_I.item())
 
         # Gx,Gz
         opto_Gx.zero_grad()
         opto_Gz.zero_grad()
         Loss_g = -torch.log(1 - p_q + EPS).mean() - torch.log(p_p + EPS).mean()
         Loss_g.backward()
+        Gx_grad = utils.grad_norm(Gx.parameters())
+        utils.clip_grad_norm(Gx.parameters(),I_Gx_grad,Gx_grad)
         opto_Gx.step()
         opto_Gz.step()
-        batch.add('loss/g',Loss_g.item())
+        batch.add('loss/I_Gz', (Gz_mu - z).pow(2).sum(dim=1).mean())
+        batch.add('gradients/Gx_unclipped',Gx_grad)
         batch.add('gradients/Gx',utils.grad_norm(Gx.parameters()))
         batch.add('gradients/Gz',utils.grad_norm(Gz.parameters()))
 
@@ -189,7 +194,7 @@ def test(epoch):
 
     noise.normal_() # noise ~ N(0,1)
     if opt.no_cuda:
-        z_gen = Gz(Variable(img0.cuda()),Variable(noise))
+        _, z_gen, _ = Gz(Variable(img0.cuda()),Variable(noise))
         z_gen = z_gen.data.cpu()
     else:
         z_gen = Gz(Variable(img0),Variable(noise))

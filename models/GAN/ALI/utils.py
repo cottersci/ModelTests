@@ -1,5 +1,6 @@
 import torch
 from pytorch_utils import init
+import math
 
 def parse_args():
     parser = init.parser()
@@ -55,7 +56,7 @@ def init_dataset_loader(dataset,batch_size,location, **kwargs):
         print('Invalid --dataset choice')
         exit()
 
-def logQ(z,mu,logstd):
+def logQ(z, mu, logstd, EPS = 1e-8):
     std = logstd.exp()
     epislon = (z - mu).pow(2).div(2 * std + EPS)
 
@@ -73,9 +74,14 @@ def grad_norm(parameters,norm_type = 2):
 
     return total_norm
 
-def clip_grad_norm(parameters, g_u, g_m, norm_type=2):
+def clip_grad_norm(parameters, g_u, g_m):
+    """
+        Clip the paramaters
+
+        g_m norm of paranters to clip
+        g_u norm to clipe paramters to
+    """
     parameters = list(filter(lambda p: p.grad is not None, parameters))
-    norm_type = float(norm_type)
 
     for p in parameters:
         p.grad.data.div_(g_m).mul_(min(g_u,g_m))
