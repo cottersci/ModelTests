@@ -23,7 +23,7 @@ def parse_args():
                                     of Nimages^z_dim images''')
     parser.add_argument('--noise-dim',
                         type=int,
-                        default=64,
+                        default=5,
                         help='''The number of noise dimenions to add to the
                                 generator input''')
     return parser.parse_args()

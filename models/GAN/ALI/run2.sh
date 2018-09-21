@@ -1,7 +1,7 @@
 #PBS -S /bin/bash
 #PBS -q gpu_q
 #PBS -l nodes=1:ppn=2:gpus=1
-#PBS -l walltime=3:00:00:00
+#PBS -l walltime=2:00:00:00
 #PBS -l mem=6gb
 
 #Extend Maximum number of directories to recursively search for a Pipfile.
@@ -42,4 +42,4 @@ cp run2.sh $TRAINING_FOLDER/$RUN/
 
 cd $TRAINING_FOLDER/$RUN/
 
-pipenv run python Train.py 7 $DATASET_FOLDER  --Nimages 2
+pipenv run python Train.py 2 --Nimages 10 --save-every 250 --download --dataset MNIST
